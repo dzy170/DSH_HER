@@ -1,0 +1,4 @@
+﻿# 只放参照物与补丁，不放运行数据
+.npmrc
+*.log
+node_modules/

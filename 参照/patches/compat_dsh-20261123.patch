@@ -1,0 +1,33 @@
+--- a/astrbot_plugin_compat_dsh/main.py
++++ b/astrbot_plugin_compat_dsh/main.py
+@@ -74,7 +74,9 @@
+             stderr=asyncio.subprocess.PIPE,
+             cwd=str(HOST_DIR),
+         )
+-        self._reader = asyncio.create_task(self._read_loop())
++        # 2026-11-23：这里原来先起 _read_loop 再自己 readline 等 ready 帧，
++        # 两个协程抢读同一根 stdout，回复帧会被错分走 → 工具调用永远等不到结果（120s 超时）。
++        # 改成：先自己读 ready 帧，读完再启动读循环，保证只有一个读者对着管道。
+         first = await asyncio.wait_for(self.proc.stdout.readline(), timeout=timeout)
+         if not first:
+             raise RuntimeError(f"{self.name}: child process returned no ready frame")
+@@ -84,6 +86,7 @@
+         self.name = msg.get("plugin") or self.name
+         self.tools = msg.get("tools") or []
+         self.prompts = msg.get("prompts") or []
++        self._reader = asyncio.create_task(self._read_loop())
+ 
+     async def _read_loop(self) -> None:
+         assert self.proc and self.proc.stdout
+@@ -216,7 +219,10 @@
+                 logger.error(f"[compat_dsh] failed to register tools: {e}")
+ 
+     def _make_handler(self, p: DshProcess, tool_name: str):
+-        async def handler(**kwargs):
++        # 2026-11-23：AstrBot 调用工具时按 (event, **kwargs) 传，原来的
++        # async def handler(**kwargs) 会报 "takes 0 positional arguments but 1 was given"。
++        # 这里接住第一个位置参数（event）再转发真正的参数。
++        async def handler(*args, **kwargs):
+             try:
+                 res = await p.call("tools.call", {"name": tool_name, "args": kwargs}, timeout=120)
+                 return str(res)
